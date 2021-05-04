@@ -138,8 +138,10 @@ void Bayang_bind()
     }
 }
 
-void Bayang_recv_packet(uint16_t* result, char* aux)
+void Bayang_recv_packet(TrxData* data)
 {  
+    data->throttle = data->yaw = data->pitch = data->roll = 0;
+
     if(NRF24L01_ReadReg(NRF24L01_07_STATUS) & _BV(NRF24L01_07_RX_DR)) 
     { 
       // data received from tx
@@ -158,25 +160,23 @@ void Bayang_recv_packet(uint16_t* result, char* aux)
         if ((sum&0xFF) == packet[14])
         {
           // checksum OK
-          //roll
-          result[0] = (packet[4] & 0x0003) * 256 + packet[5];
-          //pitch
-          result[1] = (packet[6] & 0x0003) * 256 + packet[7];
-          //yaw
-          result[2] = (packet[10] & 0x0003) * 256 + packet[11];
-          //throttle
-          result[3] = (packet[8] & 0x0003) * 256 + packet[9];
+          data->roll = (packet[4] & 0x0003) * 256 + packet[5];
+          data->pitch = (packet[6] & 0x0003) * 256 + packet[7];
+          data->yaw = (packet[10] & 0x0003) * 256 + packet[11];
+          data->throttle = (packet[8] & 0x0003) * 256 + packet[9];
+
+          data->trim1 = packet[6] >> 2;
 /*  
           trims[0] = packet[6] >> 2;
           trims[1] = packet[4] >> 2;
           trims[2] = packet[8] >> 2;
           trims[3] = packet[10] >> 2;
 */  
-          aux[CH_INV] = (packet[3] & 0x80)?1:0; // inverted flag
-          aux[CH_FLIP] = (packet[2] & 0x08) ? 1 : 0;
-          aux[CH_EXPERT] = (packet[1] == 0xfa) ? 1 : 0;
-          aux[CH_HEADFREE] = (packet[2] & 0x02) ? 1 : 0;
-          aux[CH_RTH] = (packet[2] & 0x01) ? 1 : 0; // rth channel
+          data->invert = (packet[3] & 0x80)?1:0; // inverted flag
+          data->flip = (packet[2] & 0x08) ? 1 : 0;
+          data->expert = (packet[1] == 0xfa) ? 1 : 0;
+          data->headfree = (packet[2] & 0x02) ? 1 : 0;
+          data->rth = (packet[2] & 0x01) ? 1 : 0; // rth channel
 
           //all good
           lastRxTime = recTime;
@@ -187,13 +187,10 @@ void Bayang_recv_packet(uint16_t* result, char* aux)
         }
         else
         {
-          result[0] = result[1] = result[2] = result[3] = 0;
           nextChannel();
           //check sum failed
         }
       }
-      else
-        result[0] = result[1] = result[2] = result[3] = 0;
 
       if (skipChannel < 5)
       {
@@ -220,8 +217,6 @@ void Bayang_recv_packet(uint16_t* result, char* aux)
       } 
       */    
    }  
-   else
-    result[0] = result[1] = result[2] = result[3] = 0;
 }
 
 void nextChannel(void) 

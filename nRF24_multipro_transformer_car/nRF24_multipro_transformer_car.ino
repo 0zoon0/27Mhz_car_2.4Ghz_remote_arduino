@@ -11,6 +11,8 @@
 #define CS_pin    9 
 
 #define LED_pin    13 // LED  - D13
+#define HEADLIGHT1_pin A0
+#define HEADLIGHT2_pin A1
 
 //motor pins
 #define MOTOR1_FW 8
@@ -40,32 +42,35 @@
 #define M_FORWARD 1
 #define M_BACKWARD 2
 
-// primary channels
-#define CHN_NUMBER 4
-#define ROLL 0
-#define PITCH 1
-#define YAW 2
-#define THROTTLE 3
-
-// auxiliar channels
-#define AUX_NUMBER 5
-#define CH_EXPERT 1
-#define CH_HEADFREE 2
-
 // empty packages threshold
-#define EMPTY_PKG_THR 255
+#define EMPTY_PKG_THR 1000
+
+struct TrxData {
+  uint16_t throttle;
+  uint16_t yaw;
+  uint16_t pitch;
+  uint16_t roll;
+  char invert;
+  char flip;
+  char expert;
+  char headfree;
+  char rth;
+  char trim1;
+};
+TrxData data;
 
 uint8_t transmitterID[2];
 uint8_t packet[15];
-uint16_t data[CHN_NUMBER] = {0,0,0,0}; //values range 0-1024
-// aux channels
-char aux[AUX_NUMBER];
 static volatile uint8_t m1NewStatus, m2NewStatus, m3NewStatus, m4NewStatus;
 uint8_t m1CurrentStatus, m2CurrentStatus, m3CurrentStatus, m4CurrentStatus;
-uint8_t emptyPacketsCount;
+uint16_t emptyPacketsCount;
+bool headLightsOn;
+char trim1Default;
 void setup()
 {
     pinMode(LED_pin, OUTPUT);
+    pinMode(HEADLIGHT1_pin, OUTPUT);
+    pinMode(HEADLIGHT2_pin, OUTPUT);
     pinMode(MOSI_pin, OUTPUT);
     pinMode(SCK_pin, OUTPUT);
     pinMode(CS_pin, OUTPUT);
@@ -80,6 +85,9 @@ void setup()
     pinMode(MOTOR4, OUTPUT);
 
     digitalWrite(LED_pin, LOW); 
+    //turn on headlights so that end user knows the car is on
+    digitalWrite(HEADLIGHT1_pin, HIGH);
+    digitalWrite(HEADLIGHT2_pin, HIGH);
     digitalWrite(MOTOR1_FW, LOW);
     digitalWrite(MOTOR1_BW, LOW);
     digitalWrite(MOTOR2_FW, LOW);
@@ -115,13 +123,20 @@ void setup()
     m2CurrentStatus = M_STOP;
     m3CurrentStatus = M_STOP;
     m4CurrentStatus = M_STOP;
+    
+    //turn off headlights after a connection to transmiter is established
+    digitalWrite(HEADLIGHT1_pin, LOW);
+    digitalWrite(HEADLIGHT2_pin, LOW);
+    headLightsOn = false;
 }
 
 void loop()
 {
-    // process protocol
-    Bayang_recv_packet(data, aux);
-    if (data[ROLL]==0 && data[PITCH]==0 && data[YAW]==0 && data[THROTTLE]==0) {
+    // read next packet
+    Bayang_recv_packet(&data);
+    
+    if (data.roll==0 && data.pitch==0 && data.yaw==0 && data.throttle==0) {
+      // bad link
       emptyPacketsCount++;
       if (emptyPacketsCount >= EMPTY_PKG_THR) {
         m1NewStatus = M_STOP;
@@ -129,31 +144,36 @@ void loop()
         m3NewStatus = M_STOP;
         m4NewStatus = M_STOP;
         emptyPacketsCount = EMPTY_PKG_THR;
+        //turn on the headlights so that end user knows there is a problem with the link
+        digitalWrite(HEADLIGHT1_pin, HIGH);
+        digitalWrite(HEADLIGHT2_pin, HIGH);
+        headLightsOn = true;
       }
     }
     else 
     {
       emptyPacketsCount = 0;
-      
-      if (data[YAW] < 200) //turn left
+
+      // Expert mode is used to go in reverse      
+      if (data.yaw < 200) //turn left
       {
         m1NewStatus = M_STOP;
-        if (!aux[CH_EXPERT])
+        if (!data.expert)
           m2NewStatus = M_FORWARD;
         else 
           m2NewStatus = M_BACKWARD;
       }
-      else if (data[YAW] > 800) //turn right
+      else if (data.yaw > 800) //turn right
       {
         m2NewStatus = M_STOP;
-        if (!aux[CH_EXPERT])
+        if (!data.expert)
           m1NewStatus = M_FORWARD;
         else 
           m1NewStatus = M_BACKWARD;        
       }
-      else if (data[THROTTLE] > 600) //go straight
+      else if (data.throttle > 600) //go straight
       {
-        if (!aux[CH_EXPERT]) 
+        if (!data.expert) 
         {
           m1NewStatus = M_FORWARD;
           m2NewStatus = M_FORWARD;
@@ -172,21 +192,48 @@ void loop()
 
       //check pitch value, if up - make m3 go FW, if down - make m3 go BW
       //if middle stop m3
-      if (data[PITCH] > 800)
+      if (data.pitch > 800)
         m3NewStatus = M_FORWARD;
-      else if (data[PITCH] < 200)
+      else if (data.pitch < 200)
         m3NewStatus = M_BACKWARD;
       else
         m3NewStatus = M_STOP;
 
       //make m4 fire
-      if (aux[CH_HEADFREE])
+      if (data.headfree)
         m4NewStatus = M_FORWARD;
       else
         m4NewStatus = M_STOP;
-    }
+
+      //read initial trim1 value as default
+      if (trim1Default == 0)
+      {
+        trim1Default = data.trim1;    
+      }
+
+      //turn on headlights if trim1 value is different than default
+      if (data.trim1 != trim1Default)
+      {
+        if (!headLightsOn)
+        {
+          digitalWrite(HEADLIGHT1_pin, HIGH);
+          digitalWrite(HEADLIGHT2_pin, HIGH);
+          headLightsOn = true;        
+        }
+      }
+      else
+      {
+        if (headLightsOn)
+        {
+          digitalWrite(HEADLIGHT1_pin, LOW);
+          digitalWrite(HEADLIGHT2_pin, LOW);
+          headLightsOn = false;
+        }
+      }
+   }
 }
 
+//run motors depending on NewStatus variables
 ISR(TIMER2_COMPA_vect)
 {
   motorControl(m1NewStatus, &m1CurrentStatus, MOTOR1_FW, MOTOR1_BW);
